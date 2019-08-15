@@ -23,7 +23,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
-
+	calendar "google.golang.org/api/calendar/v3"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -50,21 +50,12 @@ func usage() {
 
 func main() {
 	flag.Parse()
-	if flag.NArg() == 0 {
-		usage()
-	}
-
-	name := flag.Arg(0)
-	demo, ok := demoFunc[name]
-	if !ok {
-		usage()
-	}
 
 	config := &oauth2.Config{
 		ClientID:     valueOrFileContents(*clientID, *clientIDFile),
 		ClientSecret: valueOrFileContents(*secret, *secretFile),
 		Endpoint:     google.Endpoint,
-		Scopes:       []string{demoScope[name]},
+		Scopes:       []string{calendar.CalendarScope},
 	}
 
 	ctx := context.Background()
@@ -74,7 +65,7 @@ func main() {
 		})
 	}
 	c := newOAuthClient(ctx, config)
-	demo(c, flag.Args()[1:])
+	calendarMain(c, flag.Args()[0:])
 }
 
 var (
@@ -146,10 +137,8 @@ func newOAuthClient(ctx context.Context, config *oauth2.Config) *http.Client {
 	return config.Client(ctx, token)
 }
 
-func tokenFromWeb(ctx context.Context, config *oauth2.Config) *oauth2.Token {
-	ch := make(chan string)
+func startServer(ch chan<- string, randState string) *httptest.Server {
 	CUSTOM_URL := "0.0.0.0:37555"
-	randState := fmt.Sprintf("st%d", time.Now().UnixNano())
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/favicon.ico" {
 			http.Error(rw, "", 404)
@@ -169,10 +158,20 @@ func tokenFromWeb(ctx context.Context, config *oauth2.Config) *oauth2.Token {
 		log.Printf("no code")
 		http.Error(rw, "", 500)
 	}))
+
 	l, _ := net.Listen("tcp", CUSTOM_URL)
 	ts.Listener = l
 	log.Printf("listening to %s", CUSTOM_URL)
     ts.Start()
+	return ts
+}
+
+func tokenFromWeb(ctx context.Context, config *oauth2.Config) *oauth2.Token {
+	ch := make(chan string)
+	randState := fmt.Sprintf("st%d", time.Now().UnixNano())
+
+	ts := startServer(ch, randState)
+
 	defer ts.Close()
 
 	config.RedirectURL = "http://127.0.0.1:37555"

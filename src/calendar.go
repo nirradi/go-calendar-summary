@@ -14,9 +14,6 @@ import (
 	calendar "google.golang.org/api/calendar/v3"
 )
 const TIME_FORMAT string = "2006-01-02T15:04:05-07:00"
-func init() {
-	registerDemo("calendar", calendar.CalendarScope, calendarMain)
-}
 
 // calendarMain is an example that demonstrates calling the Calendar API.
 // Its purpose is to test out the ability to get maps of struct objects.
@@ -31,7 +28,7 @@ func calendarMain(client *http.Client, argv []string) {
 
 	eventBuckets := make(map[string][]*calendar.Event)
 
-	if len(argv) != 0 {
+	if len(argv) > 1 {
 		fmt.Fprintln(os.Stderr, "Usage: calendar")
 		return
 	}
@@ -50,13 +47,21 @@ func calendarMain(client *http.Client, argv []string) {
 	}
 
 	if len(listRes.Items) > 0 {
-		id := listRes.Items[3].Id
+		id := ""
+		for _, v := range listRes.Items {
+			if (v.Id == argv[0]) {
+				id = v.Id
+			}
+			log.Printf("%s is %q", v.Id, v.Primary)
+		}
+		log.Printf("%s is the primary id", id)
+
 		bucketFunctions := map[string]bucketFunc {
 			"personal": isEventPersonal,
 			"attended": isEventAcceptedBy(id),
 			"1on1": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(2)}),
-			"workshop": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(3, 9)}),
-			"allhands": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(9, 1000)}),
+			"workshop": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(3, 15)}),
+			"allhands": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(15, 1000)}),
 			"short": fulfills([]bucketFunc {isEventAcceptedBy(id), isDurationInRange(0, 0.51)}),
 			"regular": fulfills([]bucketFunc {isEventAcceptedBy(id), isDurationInRange(0.51, 1.1)}),
 			"long": fulfills([]bucketFunc {isEventAcceptedBy(id), isDurationInRange(1.1, 4)}),
@@ -65,7 +70,7 @@ func calendarMain(client *http.Client, argv []string) {
 		log.Printf("Calendar ID: %v\n", id)
 		pageToken := ""
 		for {
-			req := svc.Events.List(id).Fields("items(summary,attendees,start,end)", "summary", "nextPageToken")
+			req := svc.Events.List(id).SingleEvents(true).TimeMin(time.Now().AddDate(0, -3, 0).Format(TIME_FORMAT)).TimeMax(time.Now().Format(TIME_FORMAT)).Fields("items(summary,attendees,start,end)", "summary", "nextPageToken")
 			if pageToken != "" {
 				req.PageToken(pageToken)
 			}
@@ -75,23 +80,12 @@ func calendarMain(client *http.Client, argv []string) {
 				log.Fatalf("Unable to retrieve calendar events list: %v", err)
 			}
 			for _, v := range res.Items {
-				status := "--"
-				if me := findMeInAttendees(v.Attendees, id); me != nil {
-					status = me.ResponseStatus
-				} else {
-					log.Printf("no attendees (len = %d) %q ", len(v.Attendees), isEventPersonal(v))
-				}
-
-				duration := getDuration(v)
-				log.Printf("Calendar ID %q duration: %f (start/end %v %v): (attendees #: %d) %q %q\n", id, duration, v.Start.DateTime, v.End.DateTime, len(v.Attendees), v.Summary, status)
 
 				for bucket, check := range bucketFunctions {
 					if check(v) {
 						eventBuckets[bucket] = append(eventBuckets[bucket], v)
 					}
 				}
-
-
 			}
 			if res.NextPageToken == "" {
 				break
@@ -112,10 +106,15 @@ func calendarMain(client *http.Client, argv []string) {
 			log.Printf("%q: %d %f %f \n", bucket, count, total, average)
 		}
 
-		for bucket, events := range weekly {
-			count, total, average := stats(events)
-			log.Printf("%q: %d %f %f \n", bucket, count, total, average)
+		var total float64
+		total = 0
+
+		for _, events := range weekly {
+			_, totalPerWeek, _ := stats(events)
+			total += totalPerWeek
 		}
+
+		log.Printf("average per week %f\n", total / float64(len(weekly)))
 
 		for bucket, events := range monthly {
 			count, total, average := stats(events)
