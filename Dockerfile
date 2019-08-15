@@ -7,4 +7,4 @@ RUN go get
 RUN go build -o /go-api-demo *.go
 COPY run.sh /usr/local/bin
 
-CMD ["app"]
+CMD ["run.sh"]
