@@ -1,0 +1,12 @@
+version: "3.7"
+services:
+  calendar:
+    build:
+      context: ./
+    image: calendar:local
+    env_file:
+     - ./google.creds
+    ports:
+      - 37555:37555
+    volumes:
+      - ./src:/go/src/app
