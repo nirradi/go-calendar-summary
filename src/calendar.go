@@ -60,7 +60,8 @@ func calendarMain(client *http.Client, argv []string) {
 			"personal": isEventPersonal,
 			"attended": isEventAcceptedBy(id),
 			"1on1": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(2)}),
-			"workshop": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(3, 15)}),
+			"small workshop": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(3, 6)}),
+			"large workshop": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(6, 15)}),
 			"allhands": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(15, 1000)}),
 			"short": fulfills([]bucketFunc {isEventAcceptedBy(id), isDurationInRange(0, 0.51)}),
 			"regular": fulfills([]bucketFunc {isEventAcceptedBy(id), isDurationInRange(0.51, 1.1)}),
@@ -93,17 +94,23 @@ func calendarMain(client *http.Client, argv []string) {
 			pageToken = res.NextPageToken;
 		}
 
+		daily := make(map[string][]*calendar.Event)
 		weekly := make(map[string][]*calendar.Event)
 		monthly := make(map[string][]*calendar.Event)
+
 		for _, v := range eventBuckets["attended"] {
-			_, month, week := getTimeSlots(v)
+			day, month, week := getTimeSlots(v)
+			daily[day] = append(daily[day], v)
 			monthly[month] = append(monthly[month], v)
 			weekly[week] = append(weekly[week], v)
 		}
 
+		allCount, allTotal, _ := stats(eventBuckets["attended"])
+		log.Printf("All Meetings: %d %f \n", allCount, allTotal)
+
 		for bucket, events := range eventBuckets {
-			count, total, average := stats(events)
-			log.Printf("%q: %d %f %f \n", bucket, count, total, average)
+			count, total, _ := stats(events)
+			log.Printf("%q: %f%% %f%% \n", bucket, 100.0 * float64(count)/float64(allCount), 100.0 * float64(total)/float64(allTotal))
 		}
 
 		var total float64
@@ -115,6 +122,15 @@ func calendarMain(client *http.Client, argv []string) {
 		}
 
 		log.Printf("average per week %f\n", total / float64(len(weekly)))
+
+		total = 0
+
+		for _, events := range daily {
+			_, totalPerDay, _ := stats(events)
+			total += totalPerDay
+		}
+
+		log.Printf("average per day %f\n", total / float64(len(daily)))
 
 		for bucket, events := range monthly {
 			count, total, average := stats(events)
