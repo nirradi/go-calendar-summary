@@ -55,14 +55,7 @@ func main() {
 	}
 
 
-
-//	c := newOAuthClient(ctx, config, ch, randState)
-
-
-
 	startServer(randState, config)
-
-	//calendarMain(c, flag.Args()[0:])
 
 }
 
