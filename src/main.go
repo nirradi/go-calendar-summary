@@ -5,24 +5,18 @@
 package main
 
 import (
-	"net"
 	"context"
-	"encoding/gob"
-	"errors"
 	"flag"
 	"fmt"
-	"hash/fnv"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
+	//"time"
 	calendar "google.golang.org/api/calendar/v3"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -51,6 +45,8 @@ func usage() {
 func main() {
 	flag.Parse()
 
+	randState := "abc123" //fmt.Sprintf("st%d", time.Now().UnixNano())
+	log.Printf("Randomstring is %s", randState)
 	config := &oauth2.Config{
 		ClientID:     valueOrFileContents(*clientID, *clientIDFile),
 		ClientSecret: valueOrFileContents(*secret, *secretFile),
@@ -58,14 +54,16 @@ func main() {
 		Scopes:       []string{calendar.CalendarScope},
 	}
 
-	ctx := context.Background()
-	if *debug {
-		ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{
-			Transport: &logTransport{http.DefaultTransport},
-		})
-	}
-	c := newOAuthClient(ctx, config)
-	calendarMain(c, flag.Args()[0:])
+
+
+//	c := newOAuthClient(ctx, config, ch, randState)
+
+
+
+	startServer(randState, config)
+
+	//calendarMain(c, flag.Args()[0:])
+
 }
 
 var (
@@ -92,88 +90,8 @@ func osUserCacheDir() string {
 	return "."
 }
 
-func tokenCacheFile(config *oauth2.Config) string {
-	hash := fnv.New32a()
-	hash.Write([]byte(config.ClientID))
-	hash.Write([]byte(config.ClientSecret))
-	hash.Write([]byte(strings.Join(config.Scopes, " ")))
-	fn := fmt.Sprintf("go-api-demo-tok%v", hash.Sum32())
-	return filepath.Join(osUserCacheDir(), url.QueryEscape(fn))
-}
 
-func tokenFromFile(file string) (*oauth2.Token, error) {
-	if !*cacheToken {
-		return nil, errors.New("--cachetoken is false")
-	}
-	f, err := os.Open(file)
-	if err != nil {
-		return nil, err
-	}
-	t := new(oauth2.Token)
-	err = gob.NewDecoder(f).Decode(t)
-	return t, err
-}
-
-func saveToken(file string, token *oauth2.Token) {
-	f, err := os.Create(file)
-	if err != nil {
-		log.Printf("Warning: failed to cache oauth token: %v", err)
-		return
-	}
-	defer f.Close()
-	gob.NewEncoder(f).Encode(token)
-}
-
-func newOAuthClient(ctx context.Context, config *oauth2.Config) *http.Client {
-	cacheFile := tokenCacheFile(config)
-	token, err := tokenFromFile(cacheFile)
-	if err != nil {
-		token = tokenFromWeb(ctx, config)
-		saveToken(cacheFile, token)
-	} else {
-		log.Printf("Using cached token %#v from %q", token, cacheFile)
-	}
-
-	return config.Client(ctx, token)
-}
-
-func startServer(ch chan<- string, randState string) *httptest.Server {
-	CUSTOM_URL := "0.0.0.0:37555"
-	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		if req.URL.Path == "/favicon.ico" {
-			http.Error(rw, "", 404)
-			return
-		}
-		if req.FormValue("state") != randState {
-			log.Printf("State doesn't match: req = %#v", req)
-			http.Error(rw, "", 500)
-			return
-		}
-		if code := req.FormValue("code"); code != "" {
-			fmt.Fprintf(rw, "<h1>Success</h1>Authorized.")
-			rw.(http.Flusher).Flush()
-			ch <- code
-			return
-		}
-		log.Printf("no code")
-		http.Error(rw, "", 500)
-	}))
-
-	l, _ := net.Listen("tcp", CUSTOM_URL)
-	ts.Listener = l
-	log.Printf("listening to %s", CUSTOM_URL)
-    ts.Start()
-	return ts
-}
-
-func tokenFromWeb(ctx context.Context, config *oauth2.Config) *oauth2.Token {
-	ch := make(chan string)
-	randState := fmt.Sprintf("st%d", time.Now().UnixNano())
-
-	ts := startServer(ch, randState)
-
-	defer ts.Close()
-
+func newOAuthClient(ctx context.Context, config *oauth2.Config, ch <-chan string, randState string) *http.Client {
 	config.RedirectURL = "http://127.0.0.1:37555"
 	authURL := config.AuthCodeURL(randState)
 	go openURL(authURL)
@@ -181,12 +99,92 @@ func tokenFromWeb(ctx context.Context, config *oauth2.Config) *oauth2.Token {
 	code := <-ch
 	log.Printf("Got code: %s", code)
 
-	token, err := config.Exchange(ctx, code)
-	if err != nil {
-		log.Fatalf("Token exchange error: %v", err)
-	}
-	return token
+	token, _ := config.Exchange(ctx, code)
+
+	return config.Client(ctx, token)
 }
+
+type serverFunc func(rw http.ResponseWriter, req *http.Request)
+
+func httpHandler(randState string, config *oauth2.Config) serverFunc{
+	clientTokens := make(map[string]*http.Client)
+
+	ctx := context.Background()
+
+	if *debug {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{
+			Transport: &logTransport{http.DefaultTransport},
+		})
+	}
+
+	return func(rw http.ResponseWriter, req *http.Request) {
+
+
+		if code := req.FormValue("code"); code != "" {
+
+		/*	if req.FormValue("state") != randState {
+				log.Printf("State doesn't match: req = %#v", req)
+				http.Error(rw, "", 500)
+				return
+			}*/
+
+			c, ok := clientTokens[code]
+			if !ok {
+				token, err := config.Exchange(ctx, code)
+				if err != nil {
+					log.Printf("there was an error getting a token: %v", err)
+				}
+				clientTokens[code] = config.Client(ctx, token)
+				c = clientTokens[code]
+				log.Printf("getting a new client")
+			} else {
+				log.Printf("get existing client")
+			}
+
+
+			if calendar := req.FormValue("calendar"); calendar != "" {
+				fmt.Fprintf(rw, "<html><body><ul>")
+				eventBuckets := getEventSummary(c, calendar)
+				summary := summarizeEvents(eventBuckets)
+				for key, value := range summary {
+					fmt.Fprintf(rw, "<li> <label>%s</label> <p>%s</p> </li>", key, value)
+				}
+				fmt.Fprintf(rw, "</ul></body></html>")
+
+			} else {
+				calendars := getCalendars(c)
+				fmt.Fprintf(rw, "<html><body><ul>")
+				for _, v := range calendars {
+					fmt.Fprintf(rw, "<li><a href=\"%s&calendar=%s\">%s</a></li>", req.URL.RequestURI(), v, v)
+				}
+				fmt.Fprintf(rw, "</ul></body></html>")
+			}
+
+			rw.(http.Flusher).Flush()
+			return
+		}
+
+		config.RedirectURL = "http://127.0.0.1:37555"
+		authURL := config.AuthCodeURL(randState)
+
+		fmt.Fprintf(rw, "<a href=\"%s\">Give me permission</a>", authURL)
+		rw.(http.Flusher).Flush()
+		return
+	}
+}
+
+
+
+func startServer(randState string, config *oauth2.Config) {
+
+	CUSTOM_URL := "0.0.0.0:37555"
+
+	http.HandleFunc("/", httpHandler(randState, config))
+	http.ListenAndServe(CUSTOM_URL, nil)
+
+	return
+}
+
 
 func openURL(url string) {
 	try := []string{"xdg-open", "google-chrome", "open"}

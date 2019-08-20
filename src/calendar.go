@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-
 	calendar "google.golang.org/api/calendar/v3"
 )
 const TIME_FORMAT string = "2006-01-02T15:04:05-07:00"
@@ -24,14 +22,7 @@ const TIME_FORMAT string = "2006-01-02T15:04:05-07:00"
 
 type bucketFunc func(*calendar.Event) bool
 
-func calendarMain(client *http.Client, argv []string) {
-
-	eventBuckets := make(map[string][]*calendar.Event)
-
-	if len(argv) > 1 {
-		fmt.Fprintln(os.Stderr, "Usage: calendar")
-		return
-	}
+func getCalendars(client *http.Client) []string {
 
 	svc, err := calendar.New(client)
 	if err != nil {
@@ -42,30 +33,36 @@ func calendarMain(client *http.Client, argv []string) {
 	if err != nil {
 		log.Fatalf("Unable to retrieve list of calendars: %v", err)
 	}
+	var result []string
 	for _, v := range listRes.Items {
-		log.Printf("Calendar ID: %v\n", v.Id)
+		result = append(result, v.Id)
 	}
 
-	if len(listRes.Items) > 0 {
-		id := ""
-		for _, v := range listRes.Items {
-			if (v.Id == argv[0]) {
-				id = v.Id
-			}
-			log.Printf("%s is %q", v.Id, v.Primary)
-		}
+	return result
+}
+
+func getEventSummary(client *http.Client, calendarName string) map[string][]*calendar.Event {
+
+	eventBuckets := make(map[string][]*calendar.Event)
+
+	svc, err := calendar.New(client)
+	if err != nil {
+		log.Fatalf("Unable to create Calendar service: %v", err)
+	}
+
+	id := calendarName
+
 		log.Printf("%s is the primary id", id)
 
 		bucketFunctions := map[string]bucketFunc {
-			"personal": isEventPersonal,
 			"attended": isEventAcceptedBy(id),
 			"1on1": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(2)}),
-			"small workshop": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(3, 6)}),
-			"large workshop": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(6, 15)}),
-			"allhands": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(15, 1000)}),
-			"short": fulfills([]bucketFunc {isEventAcceptedBy(id), isDurationInRange(0, 0.51)}),
+			"3 to 6 people": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(3, 6)}),
+			"6 to 15 people": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(6, 15)}),
+			"more than 15 people": fulfills([]bucketFunc {isEventAcceptedBy(id), isAttendeeCountInRange(15, 1000)}),
+/*			"short": fulfills([]bucketFunc {isEventAcceptedBy(id), isDurationInRange(0, 0.51)}),
 			"regular": fulfills([]bucketFunc {isEventAcceptedBy(id), isDurationInRange(0.51, 1.1)}),
-			"long": fulfills([]bucketFunc {isEventAcceptedBy(id), isDurationInRange(1.1, 4)}),
+			"long": fulfills([]bucketFunc {isEventAcceptedBy(id), isDurationInRange(1.1, 4)}),*/
 		}
 
 		log.Printf("Calendar ID: %v\n", id)
@@ -94,51 +91,12 @@ func calendarMain(client *http.Client, argv []string) {
 			pageToken = res.NextPageToken;
 		}
 
-		daily := make(map[string][]*calendar.Event)
-		weekly := make(map[string][]*calendar.Event)
-		monthly := make(map[string][]*calendar.Event)
-
-		for _, v := range eventBuckets["attended"] {
-			day, month, week := getTimeSlots(v)
-			daily[day] = append(daily[day], v)
-			monthly[month] = append(monthly[month], v)
-			weekly[week] = append(weekly[week], v)
+		summary := summarizeEvents(eventBuckets)
+		for key, value := range summary {
+			log.Printf("%s : %s", key, value)
 		}
 
-		allCount, allTotal, _ := stats(eventBuckets["attended"])
-		log.Printf("All Meetings: %d %f \n", allCount, allTotal)
-
-		for bucket, events := range eventBuckets {
-			count, total, _ := stats(events)
-			log.Printf("%q: %f%% %f%% \n", bucket, 100.0 * float64(count)/float64(allCount), 100.0 * float64(total)/float64(allTotal))
-		}
-
-		var total float64
-		total = 0
-
-		for _, events := range weekly {
-			_, totalPerWeek, _ := stats(events)
-			total += totalPerWeek
-		}
-
-		log.Printf("average per week %f\n", total / float64(len(weekly)))
-
-		total = 0
-
-		for _, events := range daily {
-			_, totalPerDay, _ := stats(events)
-			total += totalPerDay
-		}
-
-		log.Printf("average per day %f\n", total / float64(len(daily)))
-
-		for bucket, events := range monthly {
-			count, total, average := stats(events)
-			log.Printf("%q: %d %f %f \n", bucket, count, total, average)
-		}
-
-	}
-
+		return eventBuckets
 }
 
 func findMeInAttendees(attendees []*calendar.EventAttendee, email string) *calendar.EventAttendee {
@@ -148,6 +106,56 @@ func findMeInAttendees(attendees []*calendar.EventAttendee, email string) *calen
 		}
 	}
 	return nil
+}
+
+func summarizeEvents(eventBuckets map[string][]*calendar.Event) map[string]string {
+
+	summary := make(map[string]string)
+
+	daily := make(map[string][]*calendar.Event)
+	weekly := make(map[string][]*calendar.Event)
+	monthly := make(map[string][]*calendar.Event)
+
+	for _, v := range eventBuckets["attended"] {
+		day, month, week := getTimeSlots(v)
+		daily[day] = append(daily[day], v)
+		monthly[month] = append(monthly[month], v)
+		weekly[week] = append(weekly[week], v)
+	}
+
+	allCount, allTotal, _ := stats(eventBuckets["attended"])
+	summary["All Meetings"] = fmt.Sprintf("All Meetings: count=%d total hours=%f", allCount, allTotal)
+
+	for bucket, events := range eventBuckets {
+		count, total, _ := stats(events)
+		summary[fmt.Sprintf("%q meetings", bucket)] = fmt.Sprintf("percent of count=%f%% percent of hours=%f%%", 100.0 * float64(count)/float64(allCount), 100.0 * float64(total)/float64(allTotal))
+	}
+
+	var total float64
+	total = 0
+
+	for _, events := range weekly {
+		_, totalPerWeek, _ := stats(events)
+		total += totalPerWeek
+	}
+
+	summary["average per week"] = fmt.Sprintf("%f hours", total / float64(len(weekly)))
+
+	total = 0
+
+	for _, events := range daily {
+		_, totalPerDay, _ := stats(events)
+		total += totalPerDay
+	}
+
+	summary["average per day"] = fmt.Sprintf("%f hours", total / float64(len(daily)))
+
+	for bucket, events := range monthly {
+		count, total, _ := stats(events)
+		summary[fmt.Sprintf("%q", bucket)] = fmt.Sprintf(" count=%d total hours=%f",  count, total)
+	}
+
+	return summary
 }
 
 func getDuration(event *calendar.Event) float64 {
