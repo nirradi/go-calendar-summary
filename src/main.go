@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	//"time"
+	"time"
 	calendar "google.golang.org/api/calendar/v3"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -45,7 +45,7 @@ func usage() {
 func main() {
 	flag.Parse()
 
-	randState := "abc123" //fmt.Sprintf("st%d", time.Now().UnixNano())
+	randState := fmt.Sprintf("st%d", time.Now().UnixNano())
 	log.Printf("Randomstring is %s", randState)
 	config := &oauth2.Config{
 		ClientID:     valueOrFileContents(*clientID, *clientIDFile),
