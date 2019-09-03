@@ -68,7 +68,7 @@ func getEventSummary(client *http.Client, calendarName string) map[string][]*cal
 		log.Printf("Calendar ID: %v\n", id)
 		pageToken := ""
 		for {
-			req := svc.Events.List(id).SingleEvents(true).TimeMin(time.Now().AddDate(0, -3, 0).Format(TIME_FORMAT)).TimeMax(time.Now().Format(TIME_FORMAT)).Fields("items(summary,attendees,start,end)", "summary", "nextPageToken")
+			req := svc.Events.List(id).SingleEvents(true).TimeMin(time.Now().AddDate(0, -1, 0).Format(TIME_FORMAT)).TimeMax(time.Now().Format(TIME_FORMAT)).Fields("items(summary,attendees,start,end)", "summary", "nextPageToken")
 			if pageToken != "" {
 				req.PageToken(pageToken)
 			}

@@ -10,3 +10,14 @@ services:
       - 37555:37555
     volumes:
       - ./src:/go/src/app
+
+
+  calendar-web:
+    build:
+      context: ./client
+    image: calendar-web:local
+    ports:
+      - 3000:3000
+    volumes:
+      - ./client/app:/usr/src/app
+      - /usr/src/app/node_modules

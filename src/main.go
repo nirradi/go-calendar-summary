@@ -16,7 +16,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
+	//"time"
+	"encoding/json"
 	calendar "google.golang.org/api/calendar/v3"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -45,7 +46,7 @@ func usage() {
 func main() {
 	flag.Parse()
 
-	randState := fmt.Sprintf("st%d", time.Now().UnixNano())
+	randState := "st1566724087858748100" // fmt.Sprintf("st%d", time.Now().UnixNano())
 	log.Printf("Randomstring is %s", randState)
 	config := &oauth2.Config{
 		ClientID:     valueOrFileContents(*clientID, *clientIDFile),
@@ -100,6 +101,7 @@ func newOAuthClient(ctx context.Context, config *oauth2.Config, ch <-chan string
 type serverFunc func(rw http.ResponseWriter, req *http.Request)
 
 func httpHandler(randState string, config *oauth2.Config) serverFunc{
+
 	clientTokens := make(map[string]*http.Client)
 
 	ctx := context.Background()
@@ -111,6 +113,16 @@ func httpHandler(randState string, config *oauth2.Config) serverFunc{
 	}
 
 	return func(rw http.ResponseWriter, req *http.Request) {
+
+		setupResponse(&rw, req)
+		if (*req).Method == "OPTIONS" {
+			return
+		}
+
+		format := req.FormValue("format")
+		if format != "json" {
+			format = "html"
+		}
 
 
 		if code := req.FormValue("code"); code != "" {
@@ -136,36 +148,66 @@ func httpHandler(randState string, config *oauth2.Config) serverFunc{
 
 
 			if calendar := req.FormValue("calendar"); calendar != "" {
-				fmt.Fprintf(rw, "<html><body><ul>")
+
 				eventBuckets := getEventSummary(c, calendar)
-				summary := summarizeEvents(eventBuckets)
-				for key, value := range summary {
-					fmt.Fprintf(rw, "<li> <label>%s</label> <p>%s</p> </li>", key, value)
+
+				if format == "json" {
+					js, _ := json.Marshal(eventBuckets)
+					rw.Header().Set("Content-Type", "application/json")
+					rw.Write(js)
+					return
+				} else {
+					fmt.Fprintf(rw, "<html><body><ul>")
+					summary := summarizeEvents(eventBuckets)
+					for key, value := range summary {
+						fmt.Fprintf(rw, "<li> <label>%s</label> <p>%s</p> </li>", key, value)
+					}
+					fmt.Fprintf(rw, "</ul></body></html>")
 				}
-				fmt.Fprintf(rw, "</ul></body></html>")
+
 
 			} else {
 				calendars := getCalendars(c)
-				fmt.Fprintf(rw, "<html><body><ul>")
-				for _, v := range calendars {
-					fmt.Fprintf(rw, "<li><a href=\"%s&calendar=%s\">%s</a></li>", req.URL.RequestURI(), v, v)
+
+				if format == "json" {
+					js, _ := json.Marshal(calendars)
+					rw.Header().Set("Content-Type", "application/json")
+					rw.Write(js)
+					return
+				} else {
+					fmt.Fprintf(rw, "<html><body><ul>")
+					for _, v := range calendars {
+						fmt.Fprintf(rw, "<li><a href=\"%s&calendar=%s\">%s</a></li>", req.URL.RequestURI(), v, v)
+					}
+					fmt.Fprintf(rw, "</ul></body></html>")
 				}
-				fmt.Fprintf(rw, "</ul></body></html>")
 			}
 
 			rw.(http.Flusher).Flush()
 			return
 		}
 
-		config.RedirectURL = "http://127.0.0.1:37555"
+		config.RedirectURL = "http://127.0.0.1:3000"
 		authURL := config.AuthCodeURL(randState)
 
-		fmt.Fprintf(rw, "<a href=\"%s\">Give me permission</a>", authURL)
-		rw.(http.Flusher).Flush()
+		if format == "json" {
+			rw.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(rw).Encode(map[string]string{"auth": authURL})
+		} else {
+			fmt.Fprintf(rw, "<a href=\"%s\">Give me permission</a>", authURL)
+			rw.(http.Flusher).Flush()
+		}
+
+
 		return
 	}
 }
 
+func setupResponse(w *http.ResponseWriter, req *http.Request) {
+	(*w).Header().Set("Access-Control-Allow-Origin", "*")
+    (*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+    (*w).Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+}
 
 
 func startServer(randState string, config *oauth2.Config) {
